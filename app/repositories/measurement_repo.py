@@ -121,10 +121,11 @@ class MeasurementRepository:
                 where_sql = f"WHERE {' AND '.join(condiciones)}" if condiciones else ""
                 limite_num = max(1, min(int(limit), 50))
 
+                # Nota los dobles '%%' para evitar que psycopg2 intente sustituirlos como parámetros de tupla
                 query = f"""
                     SELECT m.id_medicion, m.fecha_hora, ec.nombre AS estado,
-                           MAX(CASE WHEN p.nombre ILIKE '%temperatura%' THEN vm.valor END) AS temperatura,
-                           MAX(CASE WHEN p.nombre ILIKE '%turbidez%' THEN vm.valor END) AS turbidez,
+                           MAX(CASE WHEN p.nombre ILIKE '%%temperatura%%' THEN vm.valor END) AS temperatura,
+                           MAX(CASE WHEN p.nombre ILIKE '%%turbidez%%' THEN vm.valor END) AS turbidez,
                            u.lugar, u.ubicabilidad
                     FROM mediciones m
                     LEFT JOIN estados_calidad ec ON m.id_estado = ec.id_estado
@@ -138,7 +139,11 @@ class MeasurementRepository:
                     LIMIT {limite_num};
                 """
 
-                cur.execute(query, tuple(valores))
+                if valores:
+                    cur.execute(query, tuple(valores))
+                else:
+                    cur.execute(query)
+
                 filas = cur.fetchall()
 
                 if not filas:
