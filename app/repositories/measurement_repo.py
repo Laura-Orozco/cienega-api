@@ -107,19 +107,25 @@ class MeasurementRepository:
         conn = self.db_manager.get_connection()
         try:
             with conn.cursor() as cur:
-                clauses = []
-                params = []
+                condiciones = []
+                parametros = []
 
                 if fecha:
-                    clauses.append("DATE(m.fecha_hora) = %s")
-                    params.append(str(fecha))
+                    condiciones.append("DATE(m.fecha_hora) = %s")
+                    parametros.append(str(fecha))
 
                 if hora is not None:
-                    clauses.append("EXTRACT(HOUR FROM m.fecha_hora) = %s")
-                    params.append(int(hora))
+                    condiciones.append("EXTRACT(HOUR FROM m.fecha_hora) = %s")
+                    parametros.append(int(hora))
 
-                where_stmt = ("WHERE " + " AND ".join(clauses)) if clauses else ""
-                limite = max(1, min(int(limit), 50))
+                limite_seguro = max(1, min(int(limit), 50))
+                condiciones.append(f"LIMIT_VAL {limite_seguro}")  # marcador interno
+
+                # Construcción del WHERE
+                filtro_sql = ""
+                clausulas = [c for c in condiciones if not c.startswith("LIMIT_VAL")]
+                if clausulas:
+                    filtro_sql = "WHERE " + " AND ".join(clausulas)
 
                 query = f"""
                     SELECT m.id_medicion, m.fecha_hora, ec.nombre AS estado,
@@ -132,31 +138,32 @@ class MeasurementRepository:
                     JOIN ubicaciones u ON s.id_ubicacion = u.id_ubicacion
                     JOIN valores_medicion vm ON m.id_medicion = vm.id_medicion
                     JOIN parametros p ON vm.id_parametro = p.id_parametro
-                    {where_stmt}
+                    {filtro_sql}
                     GROUP BY m.id_medicion, m.fecha_hora, ec.nombre, u.lugar, u.ubicabilidad
                     ORDER BY m.fecha_hora DESC
-                    LIMIT {limite};
+                    LIMIT {limite_seguro};
                 """
 
-                if params:
-                    cur.execute(query, tuple(params))
+                # Ejecutar con tupla estricta correspondiente al número de %s
+                if parametros:
+                    cur.execute(query, tuple(parametros))
                 else:
                     cur.execute(query)
 
-                rows = cur.fetchall()
+                filas = cur.fetchall()
 
                 resultados = []
-                for row in rows:
-                    if not row:
+                for fila in filas:
+                    if not fila:
                         continue
                     resultados.append({
-                        "id_medicion": row[0],
-                        "fecha_hora": str(row[1]),
-                        "estado": row[2] if len(row) > 2 and row[2] is not None else "Sin estado",
-                        "temperatura": float(row[3]) if len(row) > 3 and row[3] is not None else None,
-                        "turbidez": float(row[4]) if len(row) > 4 and row[4] is not None else None,
-                        "lugar": row[5] if len(row) > 5 else None,
-                        "ubicabilidad": row[6] if len(row) > 6 else None
+                        "id_medicion": fila[0] if len(fila) > 0 else None,
+                        "fecha_hora": str(fila[1]) if len(fila) > 1 else None,
+                        "estado": fila[2] if len(fila) > 2 and fila[2] is not None else "Sin estado",
+                        "temperatura": float(fila[3]) if len(fila) > 3 and fila[3] is not None else None,
+                        "turbidez": float(fila[4]) if len(fila) > 4 and fila[4] is not None else None,
+                        "lugar": fila[5] if len(fila) > 5 else None,
+                        "ubicabilidad": fila[6] if len(fila) > 6 else None
                     })
                 return resultados
         finally:
