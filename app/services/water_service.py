@@ -1,162 +1,56 @@
-from app.database import DatabaseManager
+from app.repositories.measurement_repo import MeasurementRepository
+from app.schemas.measurement import ESP32Payload
 
-class MeasurementRepository:
+class WaterQualityService:
     def __init__(self):
-        self.db_manager = DatabaseManager()
+        self.repo = MeasurementRepository()
 
-    def get_device_by_identifier(self, identifier: str):
-        query = "SELECT id_dispositivo FROM dispositivos WHERE identificador = %s;"
-        conn = self.db_manager.get_connection()
-        try:
-            with conn.cursor() as cur:
-                cur.execute(query, (identifier,))
-                row = cur.fetchone()
-                return row[0] if row else None
-        finally:
-            self.db_manager.release_connection(conn)
+    def evaluate_quality(self, turbidez: float, temperatura: float) -> tuple[int, str]:
+        if turbidez < 5.0 and (15.0 <= temperatura <= 25.0):
+            return 1, "Excelente"
+        elif turbidez < 15.0 and temperatura <= 30.0:
+            return 2, "Aceptable"
+        else:
+            return 3, "No Apta"
 
-    def get_sensor_by_device(self, id_dispositivo: int):
-        query = "SELECT id_sensor FROM sensores WHERE id_dispositivo = %s LIMIT 1;"
-        conn = self.db_manager.get_connection()
-        try:
-            with conn.cursor() as cur:
-                cur.execute(query, (id_dispositivo,))
-                row = cur.fetchone()
-                return row[0] if row else None
-        finally:
-            self.db_manager.release_connection(conn)
+    def register_reading(self, payload: ESP32Payload, endpoint: str):
+        id_disp = self.repo.get_device_by_identifier(payload.identificador)
+        if not id_disp:
+            raise ValueError(f"El dispositivo '{payload.identificador}' no existe en la base de datos.")
 
-    def insert_measurement(self, id_sensor: int, id_estado: int, temp: float, turb: float):
-        conn = self.db_manager.get_connection()
-        try:
-            with conn.cursor() as cur:
-                cur.execute(
-                    "INSERT INTO mediciones (id_sensor, id_estado) VALUES (%s, %s) RETURNING id_medicion, fecha_hora;",
-                    (id_sensor, id_estado)
-                )
-                id_medicion, fecha_hora = cur.fetchone()
+        id_sensor = self.repo.get_sensor_by_device(id_disp)
+        if not id_sensor:
+            raise ValueError("No se encontró ningún sensor asignado a este dispositivo.")
 
-                cur.execute(
-                    "INSERT INTO valores_medicion (id_medicion, id_parametro, valor, unidad) VALUES (%s, %s, %s, %s);",
-                    (id_medicion, 1, temp, "°C")
-                )
-                cur.execute(
-                    "INSERT INTO valores_medicion (id_medicion, id_parametro, valor, unidad) VALUES (%s, %s, %s, %s);",
-                    (id_medicion, 2, turb, "NTU")
-                )
+        id_estado, estado_nombre = self.evaluate_quality(payload.turbidez, payload.temperatura)
 
-                conn.commit()
-                return id_medicion, fecha_hora
-        except Exception as e:
-            conn.rollback()
-            raise e
-        finally:
-            self.db_manager.release_connection(conn)
+        id_medicion, fecha_hora = self.repo.insert_measurement(
+            id_sensor=id_sensor,
+            id_estado=id_estado,
+            temp=payload.temperatura,
+            turb=payload.turbidez
+        )
 
-    def log_api_call(self, id_dispositivo: int, id_medicion: int, metodo: str, endpoint: str, status_code: int):
-        conn = self.db_manager.get_connection()
-        try:
-            with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    INSERT INTO registros_api (id_dispositivo, id_medicion, metodo, endpoint, codigo_http, estado_envio)
-                    VALUES (%s, %s, %s, %s, %s, %s);
-                    """,
-                    (id_dispositivo, id_medicion, metodo, endpoint, status_code, "EXITOSO")
-                )
-                conn.commit()
-        finally:
-            self.db_manager.release_connection(conn)
+        self.repo.log_api_call(
+            id_dispositivo=id_disp,
+            id_medicion=id_medicion,
+            metodo="POST",
+            endpoint=endpoint,
+            status_code=201
+        )
 
-    def get_latest_measurement(self):
-        query = """
-            SELECT m.id_medicion, m.fecha_hora, ec.nombre AS estado,
-                   MAX(CASE WHEN p.nombre ILIKE '%temperatura%' THEN vm.valor END) AS temperatura,
-                   MAX(CASE WHEN p.nombre ILIKE '%turbidez%' THEN vm.valor END) AS turbidez,
-                   u.lugar, u.ubicabilidad
-            FROM mediciones m
-            LEFT JOIN estados_calidad ec ON m.id_estado = ec.id_estado
-            JOIN sensores s ON m.id_sensor = s.id_sensor
-            JOIN ubicaciones u ON s.id_ubicacion = u.id_ubicacion
-            JOIN valores_medicion vm ON m.id_medicion = vm.id_medicion
-            JOIN parametros p ON vm.id_parametro = p.id_parametro
-            GROUP BY m.id_medicion, m.fecha_hora, ec.nombre, u.lugar, u.ubicabilidad
-            ORDER BY m.fecha_hora DESC
-            LIMIT 1;
-        """
-        conn = self.db_manager.get_connection()
-        try:
-            with conn.cursor() as cur:
-                cur.execute(query)
-                row = cur.fetchone()
-                if not row:
-                    return None
-                return {
-                    "id_medicion": row[0],
-                    "fecha_hora": row[1],
-                    "estado": row[2],
-                    "temperatura": float(row[3]) if row[3] is not None else None,
-                    "turbidez": float(row[4]) if row[4] is not None else None,
-                    "lugar": row[5] if len(row) > 5 else None,
-                    "ubicabilidad": row[6] if len(row) > 6 else None
-                }
-        finally:
-            self.db_manager.release_connection(conn)
+        return {
+            "id_medicion": id_medicion,
+            "estado_calidad": estado_nombre,
+            "mensaje": "Medición registrada satisfactoriamente",
+            "fecha_hora": fecha_hora
+        }
 
-    def filter_measurements(self, fecha=None, hora=None, limit=1):
-        conn = self.db_manager.get_connection()
-        try:
-            with conn.cursor() as cur:
-                clauses = []
-                params = []
+    def get_latest(self):
+        data = self.repo.get_latest_measurement()
+        if not data:
+            return {"mensaje": "No hay lecturas registradas aún."}
+        return data
 
-                if fecha:
-                    clauses.append("DATE(m.fecha_hora) = %s")
-                    params.append(str(fecha))
-
-                if hora is not None:
-                    clauses.append("EXTRACT(HOUR FROM m.fecha_hora) = %s")
-                    params.append(int(hora))
-
-                where_stmt = ""
-                if clauses:
-                    where_stmt = "WHERE " + " AND ".join(clauses)
-
-                limite_seguro = max(1, min(int(limit), 50))
-
-                query = f"""
-                    SELECT m.id_medicion, m.fecha_hora, ec.nombre AS estado,
-                           MAX(CASE WHEN p.nombre ILIKE '%temperatura%' THEN vm.valor END) AS temperatura,
-                           MAX(CASE WHEN p.nombre ILIKE '%turbidez%' THEN vm.valor END) AS turbidez,
-                           u.lugar, u.ubicabilidad
-                    FROM mediciones m
-                    LEFT JOIN estados_calidad ec ON m.id_estado = ec.id_estado
-                    JOIN sensores s ON m.id_sensor = s.id_sensor
-                    JOIN ubicaciones u ON s.id_ubicacion = u.id_ubicacion
-                    JOIN valores_medicion vm ON m.id_medicion = vm.id_medicion
-                    JOIN parametros p ON vm.id_parametro = p.id_parametro
-                    {where_stmt}
-                    GROUP BY m.id_medicion, m.fecha_hora, ec.nombre, u.lugar, u.ubicabilidad
-                    ORDER BY m.fecha_hora DESC
-                    LIMIT {limite_seguro};
-                """
-
-                cur.execute(query, params)
-                rows = cur.fetchall()
-
-                resultados = []
-                for row in rows:
-                    if not row:
-                        continue
-                    resultados.append({
-                        "id_medicion": row[0] if len(row) > 0 else None,
-                        "fecha_hora": str(row[1]) if len(row) > 1 else None,
-                        "estado": row[2] if len(row) > 2 else None,
-                        "temperatura": float(row[3]) if len(row) > 3 and row[3] is not None else None,
-                        "turbidez": float(row[4]) if len(row) > 4 and row[4] is not None else None,
-                        "lugar": row[5] if len(row) > 5 else None,
-                        "ubicabilidad": row[6] if len(row) > 6 else None
-                    })
-                return resultados
-        finally:
-            self.db_manager.release_connection(conn)
+    def filtrar(self, fecha=None, hora=None, limit=1):
+        return self.repo.filter_measurements(fecha=fecha, hora=hora, limit=limit)
