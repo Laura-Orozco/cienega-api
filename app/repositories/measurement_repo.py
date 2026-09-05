@@ -103,7 +103,7 @@ class MeasurementRepository:
         finally:
             self.db_manager.release_connection(conn)
 
-def filter_measurements(self, fecha=None, hora=None, limit=1):
+    def filter_measurements(self, fecha=None, hora=None, limit=1):
         conn = self.db_manager.get_connection()
         try:
             with conn.cursor() as cur:
