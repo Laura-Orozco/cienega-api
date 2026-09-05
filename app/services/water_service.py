@@ -51,3 +51,6 @@ class WaterQualityService:
         if not data:
             return {"mensaje": "No hay lecturas registradas aún."}
         return data
+        
+  def filtrar(self, fecha=None, hora=None, limit=1):
+        return self.repo.filter_measurements(fecha=fecha, hora=hora, limit=limit)
