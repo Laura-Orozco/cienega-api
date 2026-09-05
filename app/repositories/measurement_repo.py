@@ -1,3 +1,4 @@
+import psycopg2.extras
 from app.database import DatabaseManager
 
 class MeasurementRepository:
@@ -97,8 +98,8 @@ class MeasurementRepository:
                     "estado": row[2],
                     "temperatura": float(row[3]) if row[3] is not None else None,
                     "turbidez": float(row[4]) if row[4] is not None else None,
-                    "lugar": row[5] if len(row) > 5 else None,
-                    "ubicabilidad": row[6] if len(row) > 6 else None
+                    "lugar": row[5],
+                    "ubicabilidad": row[6]
                 }
         finally:
             self.db_manager.release_connection(conn)
@@ -106,7 +107,8 @@ class MeasurementRepository:
     def filter_measurements(self, fecha=None, hora=None, limit=1):
         conn = self.db_manager.get_connection()
         try:
-            with conn.cursor() as cur:
+            # Usar RealDictCursor para evitar desbordes de índices en tuplas
+            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
                 where_clauses = ["1=1"]
                 params = []
 
@@ -121,16 +123,18 @@ class MeasurementRepository:
                 where_sql = " AND ".join(where_clauses)
 
                 query = f"""
-                    SELECT m.id_medicion, m.fecha_hora, ec.nombre AS estado,
+                    SELECT m.id_medicion, m.fecha_hora, 
+                           COALESCE(ec.nombre, 'Sin clasificar') AS estado,
                            MAX(CASE WHEN p.nombre ILIKE '%temperatura%' THEN vm.valor END) AS temperatura,
                            MAX(CASE WHEN p.nombre ILIKE '%turbidez%' THEN vm.valor END) AS turbidez,
-                           u.lugar, u.ubicabilidad
+                           COALESCE(u.lugar, '') AS lugar, 
+                           COALESCE(u.ubicabilidad, '') AS ubicabilidad
                     FROM mediciones m
                     LEFT JOIN estados_calidad ec ON m.id_estado = ec.id_estado
-                    JOIN sensores s ON m.id_sensor = s.id_sensor
-                    JOIN ubicaciones u ON s.id_ubicacion = u.id_ubicacion
-                    JOIN valores_medicion vm ON m.id_medicion = vm.id_medicion
-                    JOIN parametros p ON vm.id_parametro = p.id_parametro
+                    LEFT JOIN sensores s ON m.id_sensor = s.id_sensor
+                    LEFT JOIN ubicaciones u ON s.id_ubicacion = u.id_ubicacion
+                    LEFT JOIN valores_medicion vm ON m.id_medicion = vm.id_medicion
+                    LEFT JOIN parametros p ON vm.id_parametro = p.id_parametro
                     WHERE {where_sql}
                     GROUP BY m.id_medicion, m.fecha_hora, ec.nombre, u.lugar, u.ubicabilidad
                     ORDER BY m.fecha_hora DESC
@@ -142,15 +146,15 @@ class MeasurementRepository:
                 rows = cur.fetchall()
 
                 resultados = []
-                for row in rows:
+                for r in rows:
                     resultados.append({
-                        "id_medicion": row[0],
-                        "fecha_hora": str(row[1]),
-                        "estado": row[2] if len(row) > 2 else "Desconocido",
-                        "temperatura": float(row[3]) if len(row) > 3 and row[3] is not None else None,
-                        "turbidez": float(row[4]) if len(row) > 4 and row[4] is not None else None,
-                        "lugar": row[5] if len(row) > 5 else None,
-                        "ubicabilidad": row[6] if len(row) > 6 else None
+                        "id_medicion": r.get("id_medicion"),
+                        "fecha_hora": str(r.get("fecha_hora")),
+                        "estado": r.get("estado"),
+                        "temperatura": float(r["temperatura"]) if r.get("temperatura") is not None else None,
+                        "turbidez": float(r["turbidez"]) if r.get("turbidez") is not None else None,
+                        "lugar": r.get("lugar"),
+                        "ubicabilidad": r.get("ubicabilidad")
                     })
                 return resultados
         finally:
