@@ -21,16 +21,14 @@ def get_latest_measurement():
 
 @router.get("/filtrar")
 def filter_measurements(
-    fecha: Optional[str] = Query(None, description="Fecha en formato YYYY-MM-DD"),
-    hora: Optional[int] = Query(None, description="Hora de 0 a 23"),
-    limit: int = Query(1, ge=1, le=50, description="Cantidad máxima de registros")
+    fecha: Optional[str] = Query(None, description="Fecha YYYY-MM-DD"),
+    hora: Optional[int] = Query(None, description="Hora 0-23"),
+    limit: int = Query(10, ge=1, le=50)
 ):
     try:
         data = water_service.filtrar(fecha=fecha, hora=hora, limit=limit)
         if not data:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No se encontraron registros.")
+            return []
         return data
-    except HTTPException:
-        raise
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Error al filtrar: {str(e)}")
