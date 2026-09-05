@@ -97,8 +97,8 @@ class MeasurementRepository:
                     "estado": row[2],
                     "temperatura": float(row[3]) if row[3] is not None else None,
                     "turbidez": float(row[4]) if row[4] is not None else None,
-                    "lugar": row[5],
-                    "ubicabilidad": row[6]
+                    "lugar": row[5] if len(row) > 5 else None,
+                    "ubicabilidad": row[6] if len(row) > 6 else None
                 }
         finally:
             self.db_manager.release_connection(conn)
@@ -116,7 +116,7 @@ class MeasurementRepository:
 
                 if hora is not None:
                     where_clauses.append("EXTRACT(HOUR FROM m.fecha_hora) = %s")
-                    params.append(hora)
+                    params.append(int(hora))
 
                 where_sql = " AND ".join(where_clauses)
 
@@ -136,7 +136,7 @@ class MeasurementRepository:
                     ORDER BY m.fecha_hora DESC
                     LIMIT %s;
                 """
-                params.append(limit)
+                params.append(int(limit))
 
                 cur.execute(query, tuple(params))
                 rows = cur.fetchall()
@@ -146,11 +146,11 @@ class MeasurementRepository:
                     resultados.append({
                         "id_medicion": row[0],
                         "fecha_hora": str(row[1]),
-                        "estado": row[2],
-                        "temperatura": float(row[3]) if row[3] is not None else None,
-                        "turbidez": float(row[4]) if row[4] is not None else None,
-                        "lugar": row[5],
-                        "ubicabilidad": row[6]
+                        "estado": row[2] if len(row) > 2 else "Desconocido",
+                        "temperatura": float(row[3]) if len(row) > 3 and row[3] is not None else None,
+                        "turbidez": float(row[4]) if len(row) > 4 and row[4] is not None else None,
+                        "lugar": row[5] if len(row) > 5 else None,
+                        "ubicabilidad": row[6] if len(row) > 6 else None
                     })
                 return resultados
         finally:
