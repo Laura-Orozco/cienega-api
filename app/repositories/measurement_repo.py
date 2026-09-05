@@ -118,9 +118,8 @@ class MeasurementRepository:
                     clauses.append("EXTRACT(HOUR FROM m.fecha_hora) = %s")
                     params.append(int(hora))
 
-                where_stmt = ""
-                if clauses:
-                    where_stmt = "WHERE " + " AND ".join(clauses)
+                where_stmt = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+                limite = max(1, min(int(limit), 50))
 
                 query = f"""
                     SELECT m.id_medicion, m.fecha_hora, ec.nombre AS estado,
@@ -136,25 +135,28 @@ class MeasurementRepository:
                     {where_stmt}
                     GROUP BY m.id_medicion, m.fecha_hora, ec.nombre, u.lugar, u.ubicabilidad
                     ORDER BY m.fecha_hora DESC
-                    LIMIT {int(limit)};
+                    LIMIT {limite};
                 """
 
-                cur.execute(query, params)
-                rows = cur.fetchall()
+                if params:
+                    cur.execute(query, tuple(params))
+                else:
+                    cur.execute(query)
 
-                if not rows:
-                    return []
+                rows = cur.fetchall()
 
                 resultados = []
                 for row in rows:
+                    if not row:
+                        continue
                     resultados.append({
                         "id_medicion": row[0],
                         "fecha_hora": str(row[1]),
-                        "estado": str(row[2]) if row[2] else "Desconocido",
-                        "temperatura": float(row[3]) if row[3] is not None else None,
-                        "turbidez": float(row[4]) if row[4] is not None else None,
-                        "lugar": str(row[5]) if row[5] else None,
-                        "ubicabilidad": str(row[6]) if row[6] else None
+                        "estado": row[2] if len(row) > 2 and row[2] is not None else "Sin estado",
+                        "temperatura": float(row[3]) if len(row) > 3 and row[3] is not None else None,
+                        "turbidez": float(row[4]) if len(row) > 4 and row[4] is not None else None,
+                        "lugar": row[5] if len(row) > 5 else None,
+                        "ubicabilidad": row[6] if len(row) > 6 else None
                     })
                 return resultados
         finally:
