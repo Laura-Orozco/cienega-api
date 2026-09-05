@@ -1,4 +1,3 @@
-import psycopg2.extras
 from app.database import DatabaseManager
 
 class MeasurementRepository:
@@ -107,54 +106,55 @@ class MeasurementRepository:
     def filter_measurements(self, fecha=None, hora=None, limit=1):
         conn = self.db_manager.get_connection()
         try:
-            # Usar RealDictCursor para evitar desbordes de índices en tuplas
-            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-                where_clauses = ["1=1"]
+            with conn.cursor() as cur:
+                clauses = []
                 params = []
 
                 if fecha:
-                    where_clauses.append("DATE(m.fecha_hora) = %s")
-                    params.append(fecha)
+                    clauses.append("DATE(m.fecha_hora) = %s")
+                    params.append(str(fecha))
 
                 if hora is not None:
-                    where_clauses.append("EXTRACT(HOUR FROM m.fecha_hora) = %s")
+                    clauses.append("EXTRACT(HOUR FROM m.fecha_hora) = %s")
                     params.append(int(hora))
 
-                where_sql = " AND ".join(where_clauses)
+                where_stmt = ""
+                if clauses:
+                    where_stmt = "WHERE " + " AND ".join(clauses)
 
                 query = f"""
-                    SELECT m.id_medicion, m.fecha_hora, 
-                           COALESCE(ec.nombre, 'Sin clasificar') AS estado,
+                    SELECT m.id_medicion, m.fecha_hora, ec.nombre AS estado,
                            MAX(CASE WHEN p.nombre ILIKE '%temperatura%' THEN vm.valor END) AS temperatura,
                            MAX(CASE WHEN p.nombre ILIKE '%turbidez%' THEN vm.valor END) AS turbidez,
-                           COALESCE(u.lugar, '') AS lugar, 
-                           COALESCE(u.ubicabilidad, '') AS ubicabilidad
+                           u.lugar, u.ubicabilidad
                     FROM mediciones m
                     LEFT JOIN estados_calidad ec ON m.id_estado = ec.id_estado
-                    LEFT JOIN sensores s ON m.id_sensor = s.id_sensor
-                    LEFT JOIN ubicaciones u ON s.id_ubicacion = u.id_ubicacion
-                    LEFT JOIN valores_medicion vm ON m.id_medicion = vm.id_medicion
-                    LEFT JOIN parametros p ON vm.id_parametro = p.id_parametro
-                    WHERE {where_sql}
+                    JOIN sensores s ON m.id_sensor = s.id_sensor
+                    JOIN ubicaciones u ON s.id_ubicacion = u.id_ubicacion
+                    JOIN valores_medicion vm ON m.id_medicion = vm.id_medicion
+                    JOIN parametros p ON vm.id_parametro = p.id_parametro
+                    {where_stmt}
                     GROUP BY m.id_medicion, m.fecha_hora, ec.nombre, u.lugar, u.ubicabilidad
                     ORDER BY m.fecha_hora DESC
-                    LIMIT %s;
+                    LIMIT {int(limit)};
                 """
-                params.append(int(limit))
 
-                cur.execute(query, tuple(params))
+                cur.execute(query, params)
                 rows = cur.fetchall()
 
+                if not rows:
+                    return []
+
                 resultados = []
-                for r in rows:
+                for row in rows:
                     resultados.append({
-                        "id_medicion": r.get("id_medicion"),
-                        "fecha_hora": str(r.get("fecha_hora")),
-                        "estado": r.get("estado"),
-                        "temperatura": float(r["temperatura"]) if r.get("temperatura") is not None else None,
-                        "turbidez": float(r["turbidez"]) if r.get("turbidez") is not None else None,
-                        "lugar": r.get("lugar"),
-                        "ubicabilidad": r.get("ubicabilidad")
+                        "id_medicion": row[0],
+                        "fecha_hora": str(row[1]),
+                        "estado": str(row[2]) if row[2] else "Desconocido",
+                        "temperatura": float(row[3]) if row[3] is not None else None,
+                        "turbidez": float(row[4]) if row[4] is not None else None,
+                        "lugar": str(row[5]) if row[5] else None,
+                        "ubicabilidad": str(row[6]) if row[6] else None
                     })
                 return resultados
         finally:
