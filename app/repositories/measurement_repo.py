@@ -107,19 +107,35 @@ class MeasurementRepository:
         conn = self.db_manager.get_connection()
         try:
             with conn.cursor() as cur:
-                # Construcción dinámica de la consulta SQL
-                query = "SELECT id, temperatura, turbidez, estado, fecha_hora, lugar, ubicabilidad FROM mediciones WHERE 1=1"
+                where_clauses = ["1=1"]
                 params = []
 
                 if fecha:
-                    query += " AND DATE(fecha_hora) = %s"
+                    where_clauses.append("DATE(m.fecha_hora) = %s")
                     params.append(fecha)
 
                 if hora is not None:
-                    query += " AND EXTRACT(HOUR FROM fecha_hora) = %s"
+                    where_clauses.append("EXTRACT(HOUR FROM m.fecha_hora) = %s")
                     params.append(hora)
 
-                query += " ORDER BY fecha_hora DESC LIMIT %s"
+                where_sql = " AND ".join(where_clauses)
+
+                query = f"""
+                    SELECT m.id_medicion, m.fecha_hora, ec.nombre AS estado,
+                           MAX(CASE WHEN p.nombre ILIKE '%temperatura%' THEN vm.valor END) AS temperatura,
+                           MAX(CASE WHEN p.nombre ILIKE '%turbidez%' THEN vm.valor END) AS turbidez,
+                           u.lugar, u.ubicabilidad
+                    FROM mediciones m
+                    LEFT JOIN estados_calidad ec ON m.id_estado = ec.id_estado
+                    JOIN sensores s ON m.id_sensor = s.id_sensor
+                    JOIN ubicaciones u ON s.id_ubicacion = u.id_ubicacion
+                    JOIN valores_medicion vm ON m.id_medicion = vm.id_medicion
+                    JOIN parametros p ON vm.id_parametro = p.id_parametro
+                    WHERE {where_sql}
+                    GROUP BY m.id_medicion, m.fecha_hora, ec.nombre, u.lugar, u.ubicabilidad
+                    ORDER BY m.fecha_hora DESC
+                    LIMIT %s;
+                """
                 params.append(limit)
 
                 cur.execute(query, tuple(params))
@@ -128,11 +144,11 @@ class MeasurementRepository:
                 resultados = []
                 for row in rows:
                     resultados.append({
-                        "id": row[0],
-                        "temperatura": row[1],
-                        "turbidez": row[2],
-                        "estado": row[3],
-                        "fecha_hora": str(row[4]),
+                        "id_medicion": row[0],
+                        "fecha_hora": str(row[1]),
+                        "estado": row[2],
+                        "temperatura": float(row[3]) if row[3] is not None else None,
+                        "turbidez": float(row[4]) if row[4] is not None else None,
                         "lugar": row[5],
                         "ubicabilidad": row[6]
                     })
